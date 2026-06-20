@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Env / secrets — NEVER commit
+.env
+.env.local
+.env.*.local
+**/.env
+
+# Ruflo / claude-flow local state, scaffolding & DB
+ruvector.db
+.swarm/
+.claude-flow/
+.agents/
+.claude/
+.mcp.json
+skills-lock.json
+
+# Private client material (personal data — GDPR/RGPD)
+docs/material-randall/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*

@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>Website Discovery Briefing — Dr. Randall Jones</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <p class="eyebrow">Clinic Website Project · La Zenia, Torrevieja</p>
+      <h1>Website Discovery Briefing</h1>
+      <p class="lede">
+        Dr. Randall Morgan Jones — your answers below become the official specification for your
+        website. The more detail you give, the closer the result will be to what you want.
+        Takes about 30–45 minutes. You can stop and continue later in the same browser.
+      </p>
+    </div>
+  </header>
+
+  <div class="progress-bar" aria-hidden="true"><div class="progress-fill" id="progressFill"></div></div>
+
+  <main class="wrap">
+    <form id="briefingForm" novalidate>
+      <!-- Sections are injected by form.js from the SCHEMA so the HTML stays in
+           sync with the server. Each renders as a collapsible <section>. -->
+      <div id="sections"></div>
+
+      <div class="actions">
+        <p class="save-note" id="saveNote">Your progress is saved automatically in this browser.</p>
+        <button type="submit" class="btn-submit" id="submitBtn">Send my answers</button>
+        <button type="button" class="btn-secondary" id="clearBtn">Clear saved draft</button>
+      </div>
+
+      <div class="result" id="result" hidden></div>
+    </form>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <p>Confidential — for project use only. Responses are emailed directly to the project team and not stored on this server.</p>
+    </div>
+  </footer>
+
+  <script src="schema.js"></script>
+  <script src="form.js"></script>
+</body>
+</html>

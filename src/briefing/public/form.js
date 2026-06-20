@@ -196,25 +196,34 @@
     }
 
     submitBtn.disabled = true;
-    submitBtn.textContent = 'Sending…';
+    submitBtn.textContent = selectedFiles.length ? 'Uploading & sending…' : 'Sending…';
     data.__receivedAt = new Date().toISOString();
 
+    // Build multipart payload: all answer fields + any chosen files.
+    const fd = new FormData();
+    Object.keys(data).forEach((k) => fd.append(k, data[k]));
+    selectedFiles.forEach((file) => fd.append('attachments', file, file.name));
+
     try {
-      const res = await fetch('/submit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      });
+      // No Content-Type header — the browser sets the multipart boundary.
+      const res = await fetch('/submit', { method: 'POST', body: fd });
       const json = await res.json().catch(() => ({}));
       if (res.ok && json.ok) {
+        const extra = json.attachments
+          ? ` ${json.attachments} file(s) included${json.converted ? `, ${json.converted} converted to Markdown` : ''}.`
+          : '';
         showResult('success',
           '<strong>Thank you, Randall — your answers have been sent.</strong>' +
-          '<p>The project team has received your briefing. You can close this page now.</p>');
+          `<p>The project team has received your briefing.${extra} You can close this page now.</p>`);
         try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
         submitBtn.textContent = 'Sent ✓';
       } else if (json.error === 'missing_required') {
         showResult('error', '<strong>Some required answers are missing:</strong><ul>' +
           (json.missing || []).map((m) => `<li>${m}</li>`).join('') + '</ul>');
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Send my answers';
+      } else if (json.error === 'attachments_too_large' || json.error === 'upload_error') {
+        showResult('error', `<strong>Problem with your files:</strong><p>${json.detail || ''}</p>`);
         submitBtn.disabled = false;
         submitBtn.textContent = 'Send my answers';
       } else {
@@ -228,6 +237,62 @@
       submitBtn.disabled = false;
       submitBtn.textContent = 'Send my answers';
     }
+  }
+
+  // --- File selection --------------------------------------------------------
+  // Files can't be persisted to localStorage, so they live only in memory for
+  // the current page. The user picks them right before sending.
+  const selectedFiles = [];
+  const MAX_FILES_CLIENT = 8;
+  const MAX_TOTAL_CLIENT = 20 * 1024 * 1024;
+  const fileInput = document.getElementById('attachments');
+  const fileListEl = document.getElementById('fileList');
+
+  function fmtSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes / 1024).toFixed(0) + ' KB';
+    return (bytes / 1048576).toFixed(1) + ' MB';
+  }
+
+  function renderFileList() {
+    fileListEl.innerHTML = '';
+    selectedFiles.forEach((file, i) => {
+      const li = el('li', { class: 'file-row' }, [
+        el('span', { class: 'file-name' }, [file.name]),
+        el('span', { class: 'file-size' }, [fmtSize(file.size)]),
+      ]);
+      const rm = el('button', { type: 'button', class: 'file-remove', 'aria-label': 'Remove file' }, ['✕']);
+      rm.addEventListener('click', () => { selectedFiles.splice(i, 1); renderFileList(); });
+      li.appendChild(rm);
+      fileListEl.appendChild(li);
+    });
+    const total = selectedFiles.reduce((s, f) => s + f.size, 0);
+    if (selectedFiles.length) {
+      const note = el('li', { class: 'file-total' }, [
+        `${selectedFiles.length} file(s) · ${fmtSize(total)} total`,
+      ]);
+      if (total > MAX_TOTAL_CLIENT) {
+        note.classList.add('over');
+        note.textContent += ` — over the ${fmtSize(MAX_TOTAL_CLIENT)} limit, please remove some`;
+      }
+      fileListEl.appendChild(note);
+    }
+  }
+
+  if (fileInput) {
+    fileInput.addEventListener('change', () => {
+      for (const file of Array.from(fileInput.files)) {
+        if (selectedFiles.length >= MAX_FILES_CLIENT) {
+          showResult('error', `<strong>Too many files</strong><p>Maximum ${MAX_FILES_CLIENT} files.</p>`);
+          break;
+        }
+        // Skip exact duplicates (same name + size).
+        if (selectedFiles.some((f) => f.name === file.name && f.size === file.size)) continue;
+        selectedFiles.push(file);
+      }
+      fileInput.value = ''; // allow re-selecting the same file later
+      renderFileList();
+    });
   }
 
   // --- Init ------------------------------------------------------------------
@@ -256,6 +321,8 @@
     try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
     form.reset();
     document.querySelectorAll('input[type="hidden"]').forEach((h) => { h.value = ''; });
+    selectedFiles.length = 0;
+    renderFileList();
     updateProgress();
     showResult('info', 'Draft cleared. You can start fresh.');
   });

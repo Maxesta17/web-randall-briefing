@@ -1,8 +1,14 @@
 import express from 'express';
 import nodemailer from 'nodemailer';
+import multer from 'multer';
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
+const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // --- Config (all via environment, see .env.example) ---------------------------
@@ -16,10 +22,23 @@ const {
   MAIL_FROM,            // defaults to SMTP_USER if unset
 } = process.env;
 
+// Upload limits. Gmail caps the WHOLE message (sum of attachments) at ~25MB,
+// so we allow 25MB per file but also enforce a total cap below that to leave
+// room for the generated Markdown and headers.
+const MAX_FILE_BYTES = 25 * 1024 * 1024;   // 25 MB per file
+const MAX_TOTAL_BYTES = 20 * 1024 * 1024;  // ~20 MB total across all attachments
+const MAX_FILES = 8;
+
 const app = express();
-// Body limit: the form is text-only; 1mb is plenty and caps abuse.
+// JSON path stays for any non-file clients; the form now posts multipart.
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Multer: store uploads on disk in a temp dir so we can run markitdown on them.
+const upload = multer({
+  dest: path.join(os.tmpdir(), 'briefing-uploads'),
+  limits: { fileSize: MAX_FILE_BYTES, files: MAX_FILES },
+});
 
 // --- Form schema --------------------------------------------------------------
 // Single source of truth for which fields we accept and how they render in the
@@ -217,45 +236,135 @@ function getTransporter() {
   return transporter;
 }
 
+// --- Attachments + MarkItDown -------------------------------------------------
+// Make a safe filename for use in the email (strip path bits, keep it readable).
+function safeName(name) {
+  return String(name || 'file')
+    .replace(/[/\\]/g, '_')
+    .replace(/[^\w.\- ]/g, '_')
+    .slice(0, 120) || 'file';
+}
+
+// Convert one uploaded file to Markdown via the markitdown CLI. Returns the
+// Markdown string, or null if conversion isn't possible for that type / fails.
+// markitdown handles docx, pdf, pptx, xlsx, html, images, csv, etc.
+async function convertToMarkdown(filePath) {
+  try {
+    // `markitdown <path>` prints Markdown to stdout. Generous buffer for big docs.
+    const { stdout } = await execFileAsync('markitdown', [filePath], {
+      maxBuffer: 25 * 1024 * 1024,
+      timeout: 120000,
+    });
+    const text = (stdout || '').trim();
+    return text.length > 0 ? text : null;
+  } catch (err) {
+    console.error('markitdown failed for', path.basename(filePath), '-', err.message);
+    return null;
+  }
+}
+
+// Remove temp files multer wrote, best-effort.
+function cleanupFiles(files) {
+  for (const f of files || []) {
+    fs.promises.unlink(f.path).catch(() => {});
+  }
+}
+
 // --- Routes -------------------------------------------------------------------
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
-app.post('/submit', async (req, res) => {
+// Accept the form as multipart (fields + optional files under "attachments").
+app.post('/submit', upload.array('attachments', MAX_FILES), async (req, res) => {
+  const files = req.files || [];
   try {
     const answers = req.body && typeof req.body === 'object' ? req.body : {};
 
     const missing = validate(answers);
     if (missing.length > 0) {
+      cleanupFiles(files);
+      return res.status(400).json({ ok: false, error: 'missing_required', missing });
+    }
+
+    // Enforce total-size cap (Gmail limits the whole message, not per file).
+    const totalBytes = files.reduce((sum, f) => sum + (f.size || 0), 0);
+    if (totalBytes > MAX_TOTAL_BYTES) {
+      cleanupFiles(files);
       return res.status(400).json({
         ok: false,
-        error: 'missing_required',
-        missing,
+        error: 'attachments_too_large',
+        detail: `Total ${(totalBytes / 1048576).toFixed(1)} MB exceeds the ${(MAX_TOTAL_BYTES / 1048576).toFixed(0)} MB limit. Please send fewer or smaller files.`,
       });
     }
 
-    const receivedAt = req.body.__receivedAt || new Date().toISOString();
+    const receivedAt = sanitize(answers.__receivedAt) || new Date().toISOString();
     const respondentName = sanitize(answers.s1_full_name) || 'Randall Morgan Jones';
     const markdown = buildMarkdown(answers, { receivedAt, respondentName });
 
     const stamp = receivedAt.replace(/[:.]/g, '-');
-    const filename = `briefing-randall-${stamp}.md`;
+    const attachments = [
+      { filename: `briefing-randall-${stamp}.md`, content: markdown, contentType: 'text/markdown; charset=utf-8' },
+    ];
+
+    // For each uploaded file: attach the original, plus a .md conversion if possible.
+    const convertedNames = [];
+    const rawOnlyNames = [];
+    for (const f of files) {
+      const original = safeName(f.originalname);
+      attachments.push({ filename: original, path: f.path });
+
+      const md = await convertToMarkdown(f.path);
+      if (md) {
+        const base = original.replace(/\.[^.]+$/, '');
+        attachments.push({
+          filename: `${base}.md`,
+          content: `# ${original}\n\n> Converted to Markdown from the uploaded file.\n\n${md}\n`,
+          contentType: 'text/markdown; charset=utf-8',
+        });
+        convertedNames.push(original);
+      } else {
+        rawOnlyNames.push(original);
+      }
+    }
+
+    const summaryLines = [
+      `Randall ha completado el briefing de la web.`,
+      ``,
+      `Adjuntos:`,
+      `- briefing-randall-${stamp}.md (respuestas del cuestionario)`,
+      files.length ? `- ${files.length} archivo(s) subido(s) (original + .md cuando se pudo convertir)` : `- (sin archivos subidos)`,
+    ];
+    if (convertedNames.length) summaryLines.push(``, `Convertidos a .md: ${convertedNames.join(', ')}`);
+    if (rawOnlyNames.length) summaryLines.push(``, `Solo original (no convertible): ${rawOnlyNames.join(', ')}`);
+    summaryLines.push(``, `--- Vista previa respuestas ---`, ``, markdown.slice(0, 4000));
 
     await getTransporter().sendMail({
       from: MAIL_FROM || SMTP_USER,
       to: MAIL_TO,
       subject: `Briefing completado — ${respondentName}`,
-      text:
-        `Randall ha completado el briefing de la web.\n\n` +
-        `Se adjunta la copia en Markdown (${filename}).\n\n` +
-        `--- Vista previa ---\n\n${markdown.slice(0, 4000)}`,
-      attachments: [{ filename, content: markdown, contentType: 'text/markdown; charset=utf-8' }],
+      text: summaryLines.join('\n'),
+      attachments,
     });
 
-    return res.json({ ok: true });
+    cleanupFiles(files);
+    return res.json({ ok: true, attachments: files.length, converted: convertedNames.length });
   } catch (err) {
+    cleanupFiles(files);
     console.error('submit failed:', err.message);
     return res.status(500).json({ ok: false, error: 'send_failed', detail: err.message });
   }
+});
+
+// Multer errors (file too big, too many files) arrive here as middleware errors.
+app.use((err, _req, res, _next) => {
+  if (err instanceof multer.MulterError) {
+    const map = {
+      LIMIT_FILE_SIZE: `A file exceeds the ${(MAX_FILE_BYTES / 1048576).toFixed(0)} MB per-file limit.`,
+      LIMIT_FILE_COUNT: `Too many files (max ${MAX_FILES}).`,
+    };
+    return res.status(400).json({ ok: false, error: 'upload_error', detail: map[err.code] || err.message });
+  }
+  console.error('unhandled error:', err.message);
+  return res.status(500).json({ ok: false, error: 'server_error', detail: err.message });
 });
 
 app.listen(PORT, () => {

@@ -28,6 +28,26 @@
            sync with the server. Each renders as a collapsible <section>. -->
       <div id="sections"></div>
 
+      <!-- File uploads: CV, logo, clinic photos, certificates, etc. -->
+      <section class="section-card upload-card" id="uploadCard">
+        <div class="section-summary static">
+          <span class="section-title">Documents &amp; photos (optional)</span>
+        </div>
+        <div class="section-body">
+          <p class="section-intro">
+            Upload anything useful: your CV, logo, clinic or treatment photos, certificates,
+            or the draft website texts. We'll read documents automatically. Up to 8 files,
+            25&nbsp;MB each (20&nbsp;MB total). Accepted: PDF, Word, Excel, PowerPoint, images, text.
+          </p>
+          <label for="attachments" class="upload-drop" id="uploadDrop">
+            <span class="upload-icon">＋</span>
+            <span class="upload-text">Click to choose files</span>
+            <input type="file" id="attachments" name="attachments" multiple hidden />
+          </label>
+          <ul class="file-list" id="fileList"></ul>
+        </div>
+      </section>
+
       <div class="actions">
         <p class="save-note" id="saveNote">Your progress is saved automatically in this browser.</p>
         <button type="submit" class="btn-submit" id="submitBtn">Send my answers</button>

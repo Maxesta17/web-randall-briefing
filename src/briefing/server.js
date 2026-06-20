@@ -160,7 +160,6 @@ const SECTIONS = [
       { id: 's10_domain', label: 'Domain owned?' },
       { id: 's10_hosting', label: 'Hosting arranged?' },
       { id: 's10_maintenance', label: 'Who updates content after launch' },
-      { id: 's10_budget', label: 'Budget range', required: true },
     ],
   },
   {

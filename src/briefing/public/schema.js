@@ -128,7 +128,6 @@ window.BRIEFING_SCHEMA = [
       { id: 's10_domain', label: 'Do you own a domain name? Which?', type: 'text', placeholder: 'e.g. drrandalljones.com' },
       { id: 's10_hosting', label: 'Is hosting arranged?', type: 'select', options: ['Yes, I have hosting', 'No — please advise', 'Not sure'] },
       { id: 's10_maintenance', label: 'Who keeps content updated after launch?', type: 'select', options: ['Me', 'The project team', 'Not sure'] },
-      { id: 's10_budget', label: 'Budget range you have in mind', type: 'text' },
     ],
   },
   {
